@@ -1,72 +1,136 @@
 #include <iostream>
+#include "omp.h"
+#include <cmath>
+#include <iostream>
+#include <fstream>
+#include <iomanip>
+#include <cstdlib>
+#include <armadillo>
 
+using namespace arma;
 using namespace std;
 
-void metropolis(int, int, int, int);
-void initialize(int);
-void output(int, int, double, double, double, double, double);
+ofstream ofile;
+
+inline int periodic(int location, int latticeDim,int move){
+    return (location+latticeDim+move)%latticeDim;
+}
+
+
+void metropolis(int, double&, double&, long *, mat, vec);
+void initialize(int, long *, double&, double&, mat&);
+void output(int, int, double, double, double, double, double, double);
 double ran2(long *);
 
 int main(int argc, char* argv[])
 {
+    char* outfilename;
     int latticeDim;int mc_cycles;
     double initial_temp;double max_temp;double temp_step;
     long idum;
-    double w[17];
 
+    outfilename= argv[1];
+    ofile.open(outfilename);
 
     idum=-1;
 
-    double initial_temp = 2.0; double max_temp=2.4;double temp_step=0.1;
-    mc_cycles=100000;
+    initial_temp = 2.0; max_temp=2.1;temp_step=0.1;
+    mc_cycles=10;
     latticeDim=2;
-    for (int de=-8;de<=8;de+=4){
-        w[de+8]=exp(-de/T);
-    }
 
+    double totalE,totalE2,totalM, totalM2, m_abs, E,M;
 
     //Loop over temperatures
-    for(double T =initial_temp;T<=max_temp;T+=temp_step)
+    vec w(17);
+    for (int i =0;i<17;i++){
+        w[i]=0;
+    }
+
+    mat spinmatrix(latticeDim, latticeDim);
+    for(double T =initial_temp;T<=max_temp;T+=temp_step){
         //Precalculate possible changes in probability
         for (int de=-8;de<=8;de+=4){
             w[de+8]=exp(-de/T);
         }
+        for (int i=0;i<17;i++){
+            cout<<w[i] <<" ";
+        }
+        cout <<"\n";
         //Reset Energy and magnetization
         totalE=0;totalE2=0;
         totalM=0;totalM2=0;
-
+        E=M=0;
         //Initialize random lattice
-        intialize(latticeDim);
+        initialize(latticeDim, &idum, E, M, spinmatrix);
         //MC loop
-        for (int i = 0; i<mc_cycles;i++){
-            metropolis(latticeDim, E, M);
+
+        for (int i = 1; i<mc_cycles;i++){
+
+            metropolis(latticeDim, E, M, &idum, spinmatrix, w);
             totalE+=E; totalE2+=E*E;
             totalM+=M; totalM2+=M*M; m_abs +=fabs(M);
-        }
-        output(latticeDim, i, T, totalE, totalM, m_abs, totalE2, totalM2);
-
-
-
-}
-
-
-void metropolis(int latticeDim, int E, int M, int idum, int spinmatrix){
-    for (int j =0;j<latticeDim;j++){
-        for(int k=0;k<latticeDim;j++){
-            x= (int) ran2(*idum)*(double)latticeDim;
-            y= (int) ran2(*idum)*(double)latticeDim;
-
-            deltaE=2*spinmatrix[x][y](spinmatrix[x][periodic(y, latticeDim,1)]+spinmatrix[periodic(x, latticeDim,1)][y]+spinmatrix[x][periodic(y, latticeDim, -1)]+spinmatrix[periodic(x, latticeDim,-1][y]);
-
-            if(ran2(idum) <= w[deltaE+8]){
-                spinmatrix[x][y]*=-1;
-                M+=2*spinmatrix[x][y];
-                E-=(double) deltaE;
-            }
+            //Write variables to file
+            output(latticeDim, i, T, totalE, totalM, m_abs, totalE2, totalM2);
         }
 
     }
 
+return 0;
+}
+
+
+void metropolis(int latticeDim, double& E, double& M, long *idum, mat spinmatrix, vec w){
+    for (int j =0;j<latticeDim;j++){
+        for(int k=0;k<latticeDim;k++){
+
+            int x= (int) ran2(idum)*(double)latticeDim;
+            int y= (int) ran2(idum)*(double)latticeDim;
+
+
+            double deltaE=2*spinmatrix(x,y)*(spinmatrix(x,periodic(y, latticeDim,1))+spinmatrix(periodic(x, latticeDim,1),y)+spinmatrix(x,periodic(y, latticeDim, -1))+spinmatrix(periodic(x, latticeDim,-1),y));
+            cout<<deltaE<<"\n";
+            if(ran2(idum) <= w[deltaE+8]){
+                spinmatrix(x,y)*=-1;
+                M+=2*spinmatrix(x,y);
+                E+= deltaE;
+            }
+            for(int i=0;i<latticeDim; i++){
+                for(int k=0;k<latticeDim; k++){
+                    cout <<spinmatrix(i,k)<<"  ";
+                }
+                cout<<"\n";
+            }
+            cout<<"\n";
+        }
+
+    }
+
+}
+
+void initialize(int latticeDim, long *idum, double& E, double &M, mat& spinmatrix)
+{
+    //Construct matrix with random spin configuration
+
+    for (int x=0;x<latticeDim;x++){
+        for(int y=0;y<latticeDim;y++){
+            double s=ran2(idum);
+            if(s<.5){
+                spinmatrix(x,y)=1.;
+            }
+            else{
+                spinmatrix(x,y)=-1.;
+            }
+        }
+    }
+    //Calculate E and M
+
+    for (int x=0;x<latticeDim;x++){
+        for (int y = 0;y<latticeDim;y++){
+               M+=spinmatrix(x,y);
+               E+=spinmatrix(x,y)*spinmatrix(x, periodic(y,latticeDim,1))+spinmatrix(x,y)*spinmatrix(periodic(x, latticeDim, 1));
+        }
+
+    }
 }
 
 void output(int n_spins, int mcs, double temperature, double totalE, double totalM, double Mabs, double totalE2, double totalM2)
